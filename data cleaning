@@ -14,13 +14,13 @@
 & 'D:\RUN_ALL.ps1'
 ```
 
-程序会依次运行 Python → Stata 日面板 → Python 事件输入 → Stata 事件面板 → 独立校验。使用的本机软件为：
+程序会依次运行 Python → Stata 日面板 → Python 事件输入 → Stata 事件面板 → 独立校验。软件为：
 
 Python 负责压缩 CSV、KRX 买卖文件配对及美国/韩国时区转换；收益、正常收益估计、CAR、控制变量和缩尾均由原生 Stata 计算。完整流程没有联网下载步骤，也不需要输入账号。
 
 ### 在 Stata 内重跑清洗逻辑
 
-当前机器上源表和事件输入已经生成。若只想阅读或重新运行 Stata 部分，在 Stata 命令窗口输入：
+若只想阅读或重新运行 Stata 部分，在 Stata 命令窗口输入：
 
 ```stata
 do "D:/00_RUN_CLEANING.do"
@@ -41,7 +41,6 @@ do "D:/00_RUN_CLEANING.do"
 | `code/05_event_panel.do` | 正常收益、CAR、事前变量、样本资格、缩尾 | 窗口、最低覆盖、变量单位 |
 | `code/06_validate.py` | 独立算术检查、原 RP 数据逐列对账、输入指纹复核 | 检查结果是否可复现 |
 
-代码使用 UTF-8 编码，Stata 17 支持中文注释。不需要安装第三方 Stata 命令；本包只清洗和构造变量，不运行后续的回归结果表或 `boottest`。
 
 ## 3. 读取哪些本机文件
 
