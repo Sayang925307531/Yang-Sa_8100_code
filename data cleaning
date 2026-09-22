@@ -1,0 +1,126 @@
+# FINM8100 数据清洗代码
+
+这套代码对应 2026 年 9 月 17 日的最新版 RP：固定 60 家公司、2022—2025 年研究期、2021 年估计缓冲。核心问题是公告收益与客户联系、事前散户参与的关系。代码不把散户参与重新命名为融资杠杆。
+
+所有路径已经写成本机实际位置，无需自行猜测文件名。原下载目录和旧实证结果保持原样；本次衍生数据、审计表和日志写入：
+
+`D:`
+
+
+
+在 PowerShell 中运行下面一行：
+
+```powershell
+& 'D:\RUN_ALL.ps1'
+```
+
+程序会依次运行 Python → Stata 日面板 → Python 事件输入 → Stata 事件面板 → 独立校验。使用的本机软件为：
+
+Python 负责压缩 CSV、KRX 买卖文件配对及美国/韩国时区转换；收益、正常收益估计、CAR、控制变量和缩尾均由原生 Stata 计算。完整流程没有联网下载步骤，也不需要输入账号。
+
+### 在 Stata 内重跑清洗逻辑
+
+当前机器上源表和事件输入已经生成。若只想阅读或重新运行 Stata 部分，在 Stata 命令窗口输入：
+
+```stata
+do "D:/00_RUN_CLEANING.do"
+```
+
+这会重算日面板和事件面板，使用已准备好的公告/客户关系输入。若修改了 KRX/WRDS 源文件、公告规则或关系表，应运行上面的完整重建。直接在自己的 Stata 会话运行前，请先保存内存中未保存的工作，因为入口使用 `clear all`。
+
+## 2. 代码文件
+
+| 文件 | 工作 | 重点阅读 |
+|---|---|---|
+| `00_RUN_CLEANING.do` | Stata 主入口、路径、阶段控制、成功标记 | 从这里开始 |
+| `RUN_ALL.ps1` | 顺序调用所有阶段并保存日志 | 一键完整重建 |
+| `code/01_prepare_sources.py` | 60 家名单、证券映射、原始 KRX 买卖配对、WRDS 源表类型转换 | 前导零、重复键、总成交额与缺失值 |
+| `code/02_market_returns.do` | 市场交易日筛选、KOSPI/KOSDAQ 指数价格收益 | 交易日序号与滞后 |
+| `code/03_daily_panel.do` | 报价与散户数据合并、有效报价、日收益、市值、换手率 | `merge`、复权、停牌和连续日 |
+| `code/04_prepare_events.py` | 公告日期、重建一致预期、历史客户分组 | 信息时点与客户方向 |
+| `code/05_event_panel.do` | 正常收益、CAR、事前变量、样本资格、缩尾 | 窗口、最低覆盖、变量单位 |
+| `code/06_validate.py` | 独立算术检查、原 RP 数据逐列对账、输入指纹复核 | 检查结果是否可复现 |
+
+代码使用 UTF-8 编码，Stata 17 支持中文注释。不需要安装第三方 Stata 命令；本包只清洗和构造变量，不运行后续的回归结果表或 `boottest`。
+
+## 3. 读取哪些本机文件
+
+
+
+| 相对上述源目录的文件 | 用途 |
+|---|---|
+| `retail60_release/sample_60.csv` | 已选定的两家核心企业与 58 家供应商候选 |
+| `full_collection/prepared/ordinary_share_candidate_inventory.csv` | ISIN 对应 gvkey、iid 的证券索引 |
+| `full_collection/prepared/KOR_KRW_ordinary_candidates_2021_2025.csv.gz` | 已归档的 WRDS 韩国普通股报价，从中提取固定 60 家 |
+| `full_collection/retail_data/download_manifest.json` | KRX 查询参数、文件位置和 SHA256 指纹 |
+| `full_collection/retail_data/krx_raw/*.csv` | 分股票、时期、买卖侧的原始 KRX 导出 |
+| `full_collection/prepared/observed_positive_volume_dates_by_exchange.csv` | 已观察到的市场正成交日期 |
+| `full_collection/prepared/market_indices_raw_combined_2021_2025.csv` | 指数原始日历报价 |
+| `full_collection/NVIDIA_announcements_2022_2025.json` | 已归档官方公告及指引 |
+| `full_collection/public_nvidia_sources/*.txt` | 官方公告文本，用于金额单位对照 |
+| `full_collection/prepared/IBES_NVDA_revenue_detail_sorted.csv` | 营收预测公布、生效、目标季度等信息 |
+| `full_collection/prepared/NVIDIA_16_releases_monthly_consensus_bridge_DRAFT.csv` | 公告与指引目标季度对应，以及月度预期敏感性口径 |
+| `full_collection/prepared/supply_chain_KRW_ordinary_counterpart_review.csv` | 已整理的 FactSet 历史客户关系及证券对应 |
+
+程序起点包括原始 KRX 导出和此前已经归档的 WRDS 预整理文件。这里不重复联网查询，也没有重新实现下载 SQL、全部证券清单的最初整理或原始公司披露核验。`checks/source_catalog.csv` 逐表列出具体来源和列名转换；`checks/raw_input_manifest.json` 记录本次实际读取文件的指纹。
+
+## 4. 清洗规则为什么这样写
+
+1. **代码作为字符串。** `000660` 不能读成 `660`；gvkey 与 iid 联合识别 WRDS 证券。`isid`/唯一键断言发现重复后停止，不直接删除重复行。
+2. **买卖两侧必须配对。** 以股票代码和日期一对一合并，并核对双方的总成交额。未匹配不填 0；总成交额为 0 时保留金额，但占比设为缺失。
+3. **散户占比的分母乘 2。** `(个人买入额+个人卖出额)/(2×市场单边总成交额)`。净买入比例则是 `(买入额−卖出额)/总成交额`，分母不乘 2。
+4. **先交易日，后日收益。** 市场交易日序号 `t_obs` 不给周末编号。本日与前一个连续交易日都需要有效报价；沿用报价、缺失价格和无有效成交的日收益不强行计算。
+5. **主收益采用价格口径。** `r_price_draft=(PRCCD/AJEXDI)/(上一日PRCCD/AJEXDI)−1`，单位为小数。不把含股息收益与价格指数收益混为同一口径。
+6. **客户分组使用历史有效期。** 只用正确的 `CUSTOMER` 方向，在事件前第 6 个交易日判断。一个有效核心客户为 `D=0`，两个为 `D=1`；没有记录则缺失，不能当成已核实的非供应商。
+7. **公告信息时点一致。** I/B/E/S 美国东部时间转换到韩国时间；预测公布日和生效日严格早于美国公告日。同季度 USD 营收，每券商一条最新预测，120 个自然日内至少 10 家。
+8. **窗口覆盖有明确门槛。** 市场模型 `[-250,-31]` 至少 120 日；主 CAR `[0,2]` 三日完整；事前散户 `[-60,-6]` 至少 44 日；复合事前收益必须 55 日齐全；换手率 `[-20,-6]` 至少 12 日。
+9. **事前散户是金额加权比率。** 同一批有效日的买卖额之和除以两倍总成交额之和，不能直接平均每天的比例。
+10. **缩尾保留原始值。** 只对规模、事前收益、风险、换手率使用合并合格事前样本的 1%/99% 截点。保存为 `w_*` 新列；CAR、散户占比及交互项不缩尾。
+
+
+## 5. 清洗结果存在哪里
+
+| 文件 | 用途 |
+|---|---|
+| `data/daily/daily_panel60_all_quotes.dta` | 保留非市场日历行的合并审计面板 |
+| `data/daily/daily_panel60.dta` | 含 2021 缓冲的交易日面板 |
+| `data/daily/daily_panel60_2022_2025.dta` | 研究期股票日面板 |
+| `data/inputs/events.dta` | 16 次常规公告、预期和信息时点 |
+| `data/inputs/relations_by_event.dta` | 历史有效客户关系分组 |
+| `data/events/event_daily.dta` | 各事件窗口内的日度异常收益 |
+| `data/events/firm_event_panel.dta` | 960 条完整公司事件及资格/排除标记 |
+| `data/events/winsor_cutoffs.dta` | 四个控制变量的实际缩尾截点及样本量 |
+| `checks/firm_event_panel.csv` | 事件面板 CSV 版本 |
+| `checks/sample_exclusions.csv` | 每条公司事件的排除原因 |
+| `checks/cleaning_counts.csv` | 清洗数量汇总 |
+| `checks/cleaning_validation.json` | 独立计算与旧 RP 数据对账结果 |
+
+本批数据预期对应：73,082 条原始报价 → 68,632 条市场交易日记录（含 2021）→ 55,550 条 2022—2025 公司日记录；其中 54,854 条有效价格收益、54,265 条散户匹配、54,258 条可计算散户占比。后三个数是不同字段的覆盖量，不是连续删样本步骤。
+
+960 条公司事件中，基准样本 543 条，散户交互主样本 522 条（54 家公司、15 次公告）。程序保留其余记录及原因；不把 522 条公司事件解释成 522 次独立冲击。
+
+## 6. 在 Stata 中调用输出
+
+```stata
+* 日度面板：一行=一家公司的一个市场交易日。
+use "D:/申请/文献/FINM8100_Data_Cleaning_Annotated_20260917/data/daily/daily_panel60_2022_2025.dta", clear
+isid stock_id t_obs
+xtset stock_id t_obs
+summarize r_price_draft retail_share turnover
+
+* 事件面板：一行=一家公司在一次公告中的观测。
+use "D:/申请/文献/FINM8100_Data_Cleaning_Annotated_20260917/data/events/firm_event_panel.dta", clear
+isid stock_id event_id
+count if base_sample==1
+count if retail_sample==1
+summarize car_02 retail_pre dual_link if retail_sample==1
+```
+
+日收益和事前散户比例主要用小数；`ar_*`、`car_*` 和 `delta_abs` 已是百分点。`retail10=(retail_pre−0.5)/0.1`，增加 1 表示散户占比增加 10 个百分点。不要对已是百分点的 CAR 再乘 100。
+
+
+为复现原 RP，保留原有 `statsby` 系数的 float 存储方式。独立 OLS 检查会明确对齐这一存储精度，同时记录与双精度计算的微小差异；原始金额、构造收益和 CAR 仍采用 double。
+
+若失败，先看 `logs/` 对应阶段的日志，不要用 `capture` 包住报错继续跑，也不要为了达到预期行数删数据。将来有意新增数据或更换研究规则时，应另存新版本并解释与旧快照的差异。
+
+清洗和复现通过，仍不等于完成客户原始披露、AI/HBM 产品资格或同期新闻核验；这部分继续按 RP 的后续研究计划开展。
